@@ -1,0 +1,33 @@
+from enum import Enum
+
+class Team(Enum):
+    RED = 0
+    BLUE = 1
+
+class Color(Enum):
+    __order__ = 'RED BLUE NEUTRAL ASSASSIN'
+    RED = Team.RED.value
+    BLUE = Team.BLUE.value
+    NEUTRAL = 2
+    ASSASSIN = 3
+
+class Role(Enum):
+    SPYMASTER = 0
+    OPERATIVE = 1
+
+class Reward(Enum):
+    INVALID_HINT = -10
+    VALID_HINT = 0
+    INVALID_GUESS = -10
+    CORRECT_GUESS_OPERATIVE = 1
+    CORRECT_GUESS_SPYMASTER = 1
+    ALL_GUESSES_BONUS_OPERATIVE = 1
+    ALL_GUESSES_BONUS_SPYMASTER = 1
+    NEUTRAL_GUESS_OPERATIVE = -1
+    NEUTRAL_GUESS_SPYMASTER = -1
+    WRONG_GUESS_OPERATIVE = -3
+    WRONG_GUESS_SPYMASTER = -3
+    ASSASSIN_GUESS_OPERATIVE = -10
+    ASSASSIN_GUESS_SPYMASTER = -10
+    WIN = 10
+    LOSS = -10

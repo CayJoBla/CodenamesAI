@@ -1,0 +1,2 @@
+Word Lists: https://github.com/koosvary/codenames/tree/master/word_lists
+Rules: https://czechgames.com/files/rules/codenames-rules-en.pdf
