@@ -2,6 +2,7 @@ import random
 import math
 import gymnasium as gym
 from gymnasium import spaces
+import re
 
 from . import constants as cn
 
@@ -66,14 +67,14 @@ class CodenamesEnv(gym.Env):
             except Exception as e:
                 info['result'] = f"Invalid hint: {action}. Game over."
                 info['error'] = f"{type(e).__name__}: {e}"
-                reward_n[(team, role)] = cn.Reward.INVALID_HINT
+                reward_n[(team, role)] = cn.Reward.INVALID_HINT.value
                 done = True
                 return self.state, reward_n, done, info
 
             self.state['hint'] = (word, count)
             self.state['turn'] = (team, cn.Role.OPERATIVE)
             info['result'] = f"Valid hint: {word} {count}."
-            reward_n[(team, role)] = cn.Reward.VALID_HINT
+            reward_n[(team, role)] = cn.Reward.VALID_HINT.value
 
         # Operative's (Guesser's) turn
         elif role == cn.Role.OPERATIVE:
@@ -82,7 +83,7 @@ class CodenamesEnv(gym.Env):
             except Exception as e:
                 info['result'] = f"Invalid guess: {action}. Game over."
                 info['error'] = f"{type(e).__name__}: {e}"
-                reward_n[(team, role)] = cn.Reward.INVALID_GUESS
+                reward_n[(team, role)] = cn.Reward.INVALID_GUESS.value
                 done = True
                 return self.state, reward_n, done, info
 
@@ -104,28 +105,28 @@ class CodenamesEnv(gym.Env):
                 else:
                     info['result'] += " Out of guesses. Turnover."
                     self.turnover()
-                reward_n[(team, cn.Role.OPERATIVE)] = cn.Reward.CORRECT_GUESS_OPERATIVE
-                reward_n[(team, cn.Role.SPYMASTER)] = cn.Reward.CORRECT_GUESS_SPYMASTER
+                reward_n[(team, cn.Role.OPERATIVE)] = cn.Reward.CORRECT_GUESS_OPERATIVE.value
+                reward_n[(team, cn.Role.SPYMASTER)] = cn.Reward.CORRECT_GUESS_SPYMASTER.value
                 if self.state['hint'][1] == 0:
-                    reward_n[(team, cn.Role.OPERATIVE)] += cn.Reward.ALL_GUESSES_BONUS_OPERATIVE
-                    reward_n[(team, cn.Role.SPYMASTER)] += cn.Reward.ALL_GUESSES_BONUS_SPYMASTER
+                    reward_n[(team, cn.Role.OPERATIVE)] += cn.Reward.ALL_GUESSES_BONUS_OPERATIVE.value
+                    reward_n[(team, cn.Role.SPYMASTER)] += cn.Reward.ALL_GUESSES_BONUS_SPYMASTER.value
                 winner = self.check_winner()
             elif guess_value == cn.Color.NEUTRAL:   # Neutral guess
                 info['result'] = f"Neutral guess: {guess}. Turnover."
                 self.turnover()
-                reward_n[(team, cn.Role.OPERATIVE)] = cn.Reward.NEUTRAL_GUESS_OPERATIVE
-                reward_n[(team, cn.Role.SPYMASTER)] = cn.Reward.NEUTRAL_GUESS_SPYMASTER
+                reward_n[(team, cn.Role.OPERATIVE)] = cn.Reward.NEUTRAL_GUESS_OPERATIVE.value
+                reward_n[(team, cn.Role.SPYMASTER)] = cn.Reward.NEUTRAL_GUESS_SPYMASTER.value
                 winner = None
             elif guess_value == other_team:     # Wrong guess
                 info['result'] = f"Wrong guess: {guess}. Turnover."
                 self.turnover()
-                reward_n[(team, cn.Role.OPERATIVE)] = cn.Reward.WRONG_GUESS_OPERATIVE
-                reward_n[(team, cn.Role.SPYMASTER)] = cn.Reward.WRONG_GUESS_SPYMASTER
+                reward_n[(team, cn.Role.OPERATIVE)] = cn.Reward.WRONG_GUESS_OPERATIVE.value
+                reward_n[(team, cn.Role.SPYMASTER)] = cn.Reward.WRONG_GUESS_SPYMASTER.value
                 winner = self.check_winner()
             elif guess_value == cn.Color.ASSASSIN:  # Assassin guess
                 info['result'] = f"Assassin guess: {guess}. Game over."
-                reward_n[(team, cn.Role.OPERATIVE)] = cn.Reward.ASSASSIN_GUESS_OPERATIVE
-                reward_n[(team, cn.Role.SPYMASTER)] = cn.Reward.ASSASSIN_GUESS_SPYMASTER
+                reward_n[(team, cn.Role.OPERATIVE)] = cn.Reward.ASSASSIN_GUESS_OPERATIVE.value
+                reward_n[(team, cn.Role.SPYMASTER)] = cn.Reward.ASSASSIN_GUESS_SPYMASTER.value
                 done = True
                 winner = other_team
             else:
@@ -136,10 +137,10 @@ class CodenamesEnv(gym.Env):
                 winner_name = "Red" if winner == cn.Team.RED else "Blue"
                 info['result'] += f" {winner_name} wins!"
                 done = True
-                reward_n[(winner, cn.Role.SPYMASTER)] += cn.Reward.WIN
-                reward_n[(winner, cn.Role.OPERATIVE)] += cn.Reward.WIN
-                reward_n[(not_winner, cn.Role.SPYMASTER)] += cn.Reward.LOSS
-                reward_n[(not_winner, cn.Role.OPERATIVE)] += cn.Reward.LOSS
+                reward_n[(winner, cn.Role.SPYMASTER)] += cn.Reward.WIN.value
+                reward_n[(winner, cn.Role.OPERATIVE)] += cn.Reward.WIN.value
+                reward_n[(not_winner, cn.Role.SPYMASTER)] += cn.Reward.LOSS.value
+                reward_n[(not_winner, cn.Role.OPERATIVE)] += cn.Reward.LOSS.value
                 
         else:
             raise ValueError("Invalid role in turn.")
@@ -167,14 +168,16 @@ class CodenamesEnv(gym.Env):
 
     def render(self):
         # TODO: Implement render method to display game state
-        for i, word in enumerate(self.state['words']):
-            print(f"{word.ljust(MAX_TEXT_LENGTH)}\t({self.state['board'][i]})\tGuessed: {self.state['guessed'][i]}")
+        return None
 
     def parse_hint(self, hint):
         # Split word from count
-        split = hint.split()
-        count = split[-1]
-        word = ' '.join(split[:-1])
+        hints = re.findall(r"([a-zA-Z ]+) (\d+)", hint)
+        if len(hints) == 0:
+            raise ValueError("Hint must be a single word followed by a count.")
+        elif len(hints) > 1:
+            raise ValueError("Cannot provide multiple hints at once.")
+        word, count = hints[0]
 
         # Validate count
         if count.isdigit():
@@ -182,16 +185,21 @@ class CodenamesEnv(gym.Env):
             if count < 0:
                 raise ValueError("Count must be a non-negative integer.")
         elif count == 'inf':
-            count = np.inf
+            count = math.inf
         else:
             raise ValueError("Count must be a non-negative integer or 'inf'.")
         
         # Validate word
         word = word.strip().upper()
-        if word in self.state['words']:
-            index = self.state['words'].index(word)
-            if not self.state['guessed'][index]:
-                raise ValueError("Hint word is currently on the board.")
+        for subword in word.split():
+            print(subword)
+            if subword in self.state['words']:
+                index = self.state['words'].index(word)
+                print(index)
+                print(self.state['words'][index])
+                if not self.state['guessed'][index]:
+                    print(self.state['guessed'][index])
+                    raise ValueError("Hint word is currently on the board.")
 
         return word, count
 
