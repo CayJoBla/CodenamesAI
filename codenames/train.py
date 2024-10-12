@@ -37,7 +37,7 @@ class TrainReward(Enum):
     WIN = 0     # Remove the WIN and LOSS rewards
     LOSS = 0
 
-def codenames_coupled(
+def codenames(
     spymaster,
     operative,
     board_shape=(5, 5),
@@ -125,7 +125,7 @@ def codenames_coupled(
 
 
 if __name__ == "__main__":
-    codenames_coupled(
+    codenames(
         spymaster = "meta-llama/Llama-3.2-1B-Instruct",
         operative = "meta-llama/Llama-3.2-1B-Instruct",
         num_games = 10
