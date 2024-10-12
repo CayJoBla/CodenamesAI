@@ -17,6 +17,7 @@ class CodenamesEnv(gym.Env):
         num_red=9, 
         num_blue=8,
         num_assassin=1,
+        reward_values=None,
         word_file='codenames/word_lists/codenames.txt',
     ):
         # Define game board attributes
@@ -28,6 +29,9 @@ class CodenamesEnv(gym.Env):
         self.num_neutral = self.num_words - (num_red + num_blue + num_assassin)
         if self.num_neutral < 0:
             raise ValueError("Invalid number of words for board size.")
+
+        if reward_values is None:
+            self.rewards = cn.Reward
 
         # Load full word list
         self.word_file = word_file
@@ -53,43 +57,51 @@ class CodenamesEnv(gym.Env):
         info = {}       
         done = False
         reward_n = {
-            (cn.Team.RED, cn.Role.SPYMASTER): 0,
-            (cn.Team.RED, cn.Role.OPERATIVE): 0,
-            (cn.Team.BLUE, cn.Role.SPYMASTER): 0,
-            (cn.Team.BLUE, cn.Role.OPERATIVE): 0,
+            (cn.Team.RED, cn.Role.SPYMASTER): self.rewards.IDLE.value,
+            (cn.Team.RED, cn.Role.OPERATIVE): self.rewards.IDLE.value,
+            (cn.Team.BLUE, cn.Role.SPYMASTER): self.rewards.IDLE.value,
+            (cn.Team.BLUE, cn.Role.OPERATIVE): self.rewards.IDLE.value,
         }
         team, role = self.state['turn']
 
         # Spymaster's turn
         if role == cn.Role.SPYMASTER:
             try:
-                word, count = self.parse_hint(action)  
+                hint, reward, result = self.parse_hint(action)  
             except Exception as e:
-                info['result'] = f"Invalid hint: {action}. Game over."
+                hint = None
+                result = f"Invalid hint: {action}. Game over."
+                reward = self.rewards.HINT_UNPARSEABLE.value
                 info['error'] = f"{type(e).__name__}: {e}"
-                reward_n[(team, role)] = cn.Reward.INVALID_HINT.value
+            if hint is None:
+                info['result'] = result
+                reward_n[(team, role)] += reward
                 done = True
                 return self.state, reward_n, done, info
-
-            self.state['hint'] = (word, count)
+            self.state['hint'] = hint
             self.state['turn'] = (team, cn.Role.OPERATIVE)
-            info['result'] = f"Valid hint: {word} {count}."
-            reward_n[(team, role)] = cn.Reward.VALID_HINT.value
+            info['result'] = result
+            reward_n[(team, role)] = reward
 
         # Operative's (Guesser's) turn
         elif role == cn.Role.OPERATIVE:
             try:
-                guess = self.parse_guess(action)
+                guess, reward, result = self.parse_guess(action)
             except Exception as e:
-                info['result'] = f"Invalid guess: {action}. Game over."
+                guess = None
+                result = f"Invalid guess: {action}. Game over."
+                reward = self.rewards.GUESS_UNPARSEABLE.value
                 info['error'] = f"{type(e).__name__}: {e}"
-                reward_n[(team, role)] = cn.Reward.INVALID_GUESS.value
+            if guess is None:
+                info['result'] = result
+                reward_n[(team, role)] += reward
                 done = True
                 return self.state, reward_n, done, info
-
+            
             # Pass turn and abstain from guessing   
             if guess == '':  
-                info['result'] = "Abstained from guessing. Turnover."
+                info['result'] = result
+                reward_n[(team, role)] += reward
                 self.turnover()
                 return self.state, reward_n, done, info
 
@@ -105,28 +117,28 @@ class CodenamesEnv(gym.Env):
                 else:
                     info['result'] += " Out of guesses. Turnover."
                     self.turnover()
-                reward_n[(team, cn.Role.OPERATIVE)] = cn.Reward.CORRECT_GUESS_OPERATIVE.value
-                reward_n[(team, cn.Role.SPYMASTER)] = cn.Reward.CORRECT_GUESS_SPYMASTER.value
+                reward_n[(team, cn.Role.OPERATIVE)] = self.rewards.CORRECT_GUESS_OPERATIVE.value
+                reward_n[(team, cn.Role.SPYMASTER)] = self.rewards.CORRECT_GUESS_SPYMASTER.value
                 if self.state['hint'][1] == 0:
-                    reward_n[(team, cn.Role.OPERATIVE)] += cn.Reward.ALL_GUESSES_BONUS_OPERATIVE.value
-                    reward_n[(team, cn.Role.SPYMASTER)] += cn.Reward.ALL_GUESSES_BONUS_SPYMASTER.value
+                    reward_n[(team, cn.Role.OPERATIVE)] += self.rewards.ALL_GUESSES_BONUS_OPERATIVE.value
+                    reward_n[(team, cn.Role.SPYMASTER)] += self.rewards.ALL_GUESSES_BONUS_SPYMASTER.value
                 winner = self.check_winner()
             elif guess_value == cn.Color.NEUTRAL:   # Neutral guess
                 info['result'] = f"Neutral guess: {guess}. Turnover."
                 self.turnover()
-                reward_n[(team, cn.Role.OPERATIVE)] = cn.Reward.NEUTRAL_GUESS_OPERATIVE.value
-                reward_n[(team, cn.Role.SPYMASTER)] = cn.Reward.NEUTRAL_GUESS_SPYMASTER.value
+                reward_n[(team, cn.Role.OPERATIVE)] = self.rewards.NEUTRAL_GUESS_OPERATIVE.value
+                reward_n[(team, cn.Role.SPYMASTER)] = self.rewards.NEUTRAL_GUESS_SPYMASTER.value
                 winner = None
             elif guess_value == other_team:     # Wrong guess
                 info['result'] = f"Wrong guess: {guess}. Turnover."
                 self.turnover()
-                reward_n[(team, cn.Role.OPERATIVE)] = cn.Reward.WRONG_GUESS_OPERATIVE.value
-                reward_n[(team, cn.Role.SPYMASTER)] = cn.Reward.WRONG_GUESS_SPYMASTER.value
+                reward_n[(team, cn.Role.OPERATIVE)] = self.rewards.WRONG_GUESS_OPERATIVE.value
+                reward_n[(team, cn.Role.SPYMASTER)] = self.rewards.WRONG_GUESS_SPYMASTER.value
                 winner = self.check_winner()
             elif guess_value == cn.Color.ASSASSIN:  # Assassin guess
                 info['result'] = f"Assassin guess: {guess}. Game over."
-                reward_n[(team, cn.Role.OPERATIVE)] = cn.Reward.ASSASSIN_GUESS_OPERATIVE.value
-                reward_n[(team, cn.Role.SPYMASTER)] = cn.Reward.ASSASSIN_GUESS_SPYMASTER.value
+                reward_n[(team, cn.Role.OPERATIVE)] = self.rewards.ASSASSIN_GUESS_OPERATIVE.value
+                reward_n[(team, cn.Role.SPYMASTER)] = self.rewards.ASSASSIN_GUESS_SPYMASTER.value
                 done = True
                 winner = other_team
             else:
@@ -137,10 +149,10 @@ class CodenamesEnv(gym.Env):
                 winner_name = "Red" if winner == cn.Team.RED else "Blue"
                 info['result'] += f" {winner_name} wins!"
                 done = True
-                reward_n[(winner, cn.Role.SPYMASTER)] += cn.Reward.WIN.value
-                reward_n[(winner, cn.Role.OPERATIVE)] += cn.Reward.WIN.value
-                reward_n[(not_winner, cn.Role.SPYMASTER)] += cn.Reward.LOSS.value
-                reward_n[(not_winner, cn.Role.OPERATIVE)] += cn.Reward.LOSS.value
+                reward_n[(winner, cn.Role.SPYMASTER)] += self.rewards.WIN.value
+                reward_n[(winner, cn.Role.OPERATIVE)] += self.rewards.WIN.value
+                reward_n[(not_winner, cn.Role.SPYMASTER)] += self.rewards.LOSS.value
+                reward_n[(not_winner, cn.Role.OPERATIVE)] += self.rewards.LOSS.value
                 
         else:
             raise ValueError("Invalid role in turn.")
@@ -171,49 +183,71 @@ class CodenamesEnv(gym.Env):
         return None
 
     def parse_hint(self, hint):
-        # Split word from count
-        hints = re.findall(r"([a-zA-Z ]+) (\d+)", hint)
+        # Check for valid format
+        reward = 0
+        hints = re.findall(r"([a-zA-Z ]+) (\d+)", hint.strip())
         if len(hints) == 0:
-            raise ValueError("Hint must be a single word followed by a count.")
+            result = f"Invalid hint: {hint}. Hint must be in the format 'word count'."
+            reward += self.rewards.HINT_INPARSEABLE.value
+            return None, reward, result
         elif len(hints) > 1:
-            raise ValueError("Cannot provide multiple hints at once.")
-        word, count = hints[0]
+            result = f"Invalid hint: {hint}. Only one hint word and count allowed."
+            reward += self.rewards.HINT_MULTIPLE.value
+            return None, reward, result
+        reward += self.rewards.HINT_PARSEABLE.value
+
+        hint = hints[0]
+        word, count = hint
 
         # Validate count
-        if count.isdigit():
-            count = int(count)
-            if count < 0:
-                raise ValueError("Count must be a non-negative integer.")
-        elif count == 'inf':
-            count = math.inf
-        else:
-            raise ValueError("Count must be a non-negative integer or 'inf'.")
+        if not count.isdigit() or int(count) < 0:
+            result = f"Invalid hint: {hint}. Count must be a non-negative integer."
+            reward += self.rewards.HINT_INVALID_COUNT.value
+            return None, reward, result
+        reward += self.rewards.HINT_VALID_COUNT.value
         
         # Validate word
         word = word.strip().upper()
-        for subword in word.split():
-            print(subword)
-            if subword in self.state['words']:
-                index = self.state['words'].index(word)
-                print(index)
-                print(self.state['words'][index])
-                if not self.state['guessed'][index]:
-                    print(self.state['guessed'][index])
-                    raise ValueError("Hint word is currently on the board.")
+        subwords = word.split()
+        for i, game_word in enumerate(self.state['words']):
+            if self.state['guessed'][i]:
+                continue
+            if game_word in subwords:
+                result = f"Invalid hint: {hint}. Hint word is on the board."
+                reward += self.rewards.HINT_WORD_ON_BOARD.value
+                return None, reward, result
+        reward += self.rewards.HINT_VALID_WORD.value
 
-        return word, count
+        return hint, reward, f"Valid hint: {hint}."
 
     def parse_guess(self, guess):
-        guess = guess.strip().upper()
-        if guess == '':
-            return guess
-        try:
-            index = self.state['words'].index(guess)
-        except ValueError:
-            raise ValueError("Guess is not a word on the board.")
+        # Check for valid format
+        reward = 0
+        guesses = re.findall(r"[a-zA-Z ]+", guess.strip())
+        if len(guesses) == 0:
+            result = "No guess made. Turnover."
+            reward += self.rewards.GUESS_SKIP.value
+            return '', reward, result
+        elif len(guesses) > 1:
+            result = f"Invalid guess: {guess}. Only one guess is allowed."
+            reward += self.rewards.GUESS_MULTIPLE.value
+            return None, reward, result
+        reward += self.rewards.GUESS_PARSEABLE.value
+
+        guess = guesses[0].strip().upper()
+        if not guess in self.state['words']:
+            result = f"Invalid guess: {guess}. Guess is not a word on the board."
+            reward += self.rewards.GUESS_NOT_ON_BOARD.value
+            return None, reward, result
+        
+        index = self.state['words'].index(guess)
         if self.state['guessed'][index]:
-            raise ValueError("Guess has already been made.")
-        return guess
+            result = f"Invalid guess: {guess}. Guess has already been made."
+            reward += self.rewards.GUESS_ALREADY_MADE.value
+            return None, reward, result
+
+        reward += self.rewards.GUESS_VALID.value
+        return guess, reward, f"Valid guess: {guess}."
 
     def turnover(self):
         other_team = cn.Team.BLUE if self.state['turn'][0] == cn.Team.RED else cn.Team.RED

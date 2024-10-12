@@ -47,6 +47,7 @@ class AI(CodenamesAgent):
         team,
         role, 
         model_name_or_path,
+        freeze_base_model_weights=True,
         device=None,
         **config_kwargs
     ):
@@ -55,6 +56,12 @@ class AI(CodenamesAgent):
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
         self.tokenizer.pad_token = self.tokenizer.eos_token
         model = AutoModelForCausalLMWithValueHead.from_pretrained(model_name_or_path).to(self.device)
+
+        if freeze_base_model_weights:
+            for param in model.parameters():
+                param.requires_grad = False
+            for param in model.v_head.parameters():
+                param.requires_grad = True
 
         self.ppo_config = PPOConfig(
             model_name = model_name_or_path,
@@ -114,6 +121,7 @@ class Spymaster(AI):
         self, 
         team,
         model_name_or_path, 
+        freeze_base_model_weights=True,
         device=None,
         **config_kwargs
     ):
@@ -121,6 +129,7 @@ class Spymaster(AI):
             team, 
             cn.Role.SPYMASTER,
             model_name_or_path,
+            freeze_base_model_weights,
             device,
             **config_kwargs
         )
@@ -175,6 +184,7 @@ class Operative(AI):
         self,
         team,
         model_name_or_path,
+        freeze_base_model_weights=True,
         device=None,
         **config_kwargs
     ):
