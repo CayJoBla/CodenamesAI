@@ -1,7 +1,8 @@
 import os
+import numpy as np
 
 from .gym import CodenamesEnv
-from .agents import Human, Dummy, Spymaster, Operative
+from .agents import Human, Spymaster
 from . import constants as cn
 
 DEFAULT_AI_MODEL = "gpt2"
@@ -42,9 +43,9 @@ def codenames_spymaster(
     step = 0
     while step < num_steps:
         env.reset()
-        for substep in range(2):
-            # Do clean substeps with no words guessed yet, then substeps with 
-            # words guessed already
+        for _ in range(2):
+            # Do some clean substeps with no words guessed yet, then 
+            # some substeps with words guessed already
             for team in [cn.Team.RED, cn.Team.BLUE]:
                 spymaster.team = team
                 if env.state['turn'][0] != team:
@@ -53,7 +54,7 @@ def codenames_spymaster(
                 # Spymaster's turn
                 assert env.state['turn'] == (team, cn.Role.SPYMASTER)
                 action = spymaster.get_action(env.state)
-                obs, reward_n, done, info = env.step(action)
+                _, reward_n, _, info = env.step(action)
                 spymaster_reward = reward_n[(team, cn.Role.SPYMASTER)]
                 print("Spymaster's Action:", action)
                 print("Reward:", spymaster_reward)
@@ -64,21 +65,20 @@ def codenames_spymaster(
 
             # Randomly choose words as guessed already (after first substep per team)
             if num_red > 1 and num_blue > 1:
-                indices = random.choice(range(env.num_words), min(num_red, num_blue)-1)
-                for i in indices:
-                    env.state['guessed'][i] = True
+                indices = np.random.choice(np.arange(env.num_words), size=min(num_red,num_blue)-1, replace=False)
+                env.state['guessed'][indices] = True
         step += 1
 
     if save_dir is not None:
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-        spymaster.save(os.path.join(save_dir, f"{role.name}"))
+        spymaster.save(os.path.join(save_dir, f"{spymaster.role.name}"))
 
     return spymaster
 
 
 if __name__ == "__main__":
-    codenames(
+    codenames_spymaster(
         spymaster = "meta-llama/Llama-3.2-1B-Instruct",
         num_games = 10
     )

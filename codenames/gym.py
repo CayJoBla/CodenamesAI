@@ -1,8 +1,7 @@
-import random
-import math
 import gymnasium as gym
 from gymnasium import spaces
 import re
+import numpy as np
 
 from . import constants as cn
 
@@ -30,25 +29,23 @@ class CodenamesEnv(gym.Env):
         if self.num_neutral < 0:
             raise ValueError("Invalid number of words for board size.")
 
-        if reward_values is None:
-            self.rewards = cn.Reward
+        self.rewards = cn.Reward if reward_values is None else reward_values
 
         # Load full word list
         self.word_file = word_file
         with open(self.word_file) as f:
             full_word_list = f.readlines()
-            self.full_word_list = [word.strip().upper() for word in full_word_list]
-
+            self.full_word_list = np.array([word.strip().upper() for word in full_word_list])
 
         # Gym Environment Attributes
         self.reset()        # Initialize game state
         self.observation_space = spaces.Dict({
-            'board': spaces.MultiDiscrete([len(cn.Color)] * self.num_words),
+            'colors': spaces.MultiDiscrete([len(cn.Color)] * self.num_words),
             'words': spaces.Tuple([spaces.Text(self.MAX_TEXT_LENGTH)] * self.num_words),
             'guessed': spaces.MultiBinary(self.num_words),
             'turn': spaces.MultiDiscrete([len(cn.Team), len(cn.Role)]),
             'hint': spaces.Tuple((spaces.Text(self.MAX_TEXT_LENGTH), 
-                                    spaces.Box(low=0, high=math.inf))),
+                                    spaces.Box(low=0, high=np.inf))),
         })
         self.action_space = spaces.Text(self.MAX_TEXT_LENGTH)
 
@@ -106,12 +103,13 @@ class CodenamesEnv(gym.Env):
                 return self.state, reward_n, done, info
 
             # Make a guess
-            guess_idx = self.state['words'].index(guess)
-            self.state['guessed'][guess_idx] = True
-            guess_value = self.state['board'][guess_idx]
+            guess_mask = self.state['words'] == guess
+            self.state['guessed'][guess_mask] = True
+            guess_color = self.state['colors'][guess_mask][0]
             other_team = cn.Team.BLUE if team == cn.Team.RED else cn.Team.RED
-            if guess_value == team:             # Correct guess
+            if guess_color.name == team.name:           # Correct guess
                 info['result'] = f"Correct guess: {guess}."
+                print("Hint:", self.state['hint'])
                 if self.state['hint'][1] > 0:
                     self.state['hint'] = (self.state['hint'][0], self.state['hint'][1] - 1)
                 else:
@@ -123,26 +121,26 @@ class CodenamesEnv(gym.Env):
                     reward_n[(team, cn.Role.OPERATIVE)] += self.rewards.ALL_GUESSES_BONUS_OPERATIVE.value
                     reward_n[(team, cn.Role.SPYMASTER)] += self.rewards.ALL_GUESSES_BONUS_SPYMASTER.value
                 winner = self.check_winner()
-            elif guess_value == cn.Color.NEUTRAL:   # Neutral guess
+            elif guess_color == cn.Color.NEUTRAL:       # Neutral guess
                 info['result'] = f"Neutral guess: {guess}. Turnover."
                 self.turnover()
                 reward_n[(team, cn.Role.OPERATIVE)] = self.rewards.NEUTRAL_GUESS_OPERATIVE.value
                 reward_n[(team, cn.Role.SPYMASTER)] = self.rewards.NEUTRAL_GUESS_SPYMASTER.value
                 winner = None
-            elif guess_value == other_team:     # Wrong guess
+            elif guess_color.name == other_team.name:   # Wrong guess
                 info['result'] = f"Wrong guess: {guess}. Turnover."
                 self.turnover()
                 reward_n[(team, cn.Role.OPERATIVE)] = self.rewards.WRONG_GUESS_OPERATIVE.value
                 reward_n[(team, cn.Role.SPYMASTER)] = self.rewards.WRONG_GUESS_SPYMASTER.value
                 winner = self.check_winner()
-            elif guess_value == cn.Color.ASSASSIN:  # Assassin guess
+            elif guess_color == cn.Color.ASSASSIN:      # Assassin guess
                 info['result'] = f"Assassin guess: {guess}. Game over."
                 reward_n[(team, cn.Role.OPERATIVE)] = self.rewards.ASSASSIN_GUESS_OPERATIVE.value
                 reward_n[(team, cn.Role.SPYMASTER)] = self.rewards.ASSASSIN_GUESS_SPYMASTER.value
                 done = True
                 winner = other_team
             else:
-                raise ValueError("Invalid board state value.")
+                raise ValueError(f"Invalid board state value: {guess_color}.")
             
             if winner is not None:
                 not_winner = cn.Team.BLUE if winner == cn.Team.RED else cn.Team.RED
@@ -161,19 +159,18 @@ class CodenamesEnv(gym.Env):
 
     def reset(self):
         # Create board words and team assignments
-        board = (
+        words = np.random.choice(self.full_word_list, self.num_words)
+        colors = np.array(
             [cn.Color.RED] * self.num_red +
             [cn.Color.BLUE] * self.num_blue +
             [cn.Color.NEUTRAL] * self.num_neutral +
             [cn.Color.ASSASSIN] * self.num_assassin
         )
-        random.shuffle(board)
-        words = random.sample(self.full_word_list, self.num_words)
-
+        np.random.shuffle(colors)
         self.state = {
-            'board': board,
             'words': words,
-            'guessed': [False] * self.num_words,
+            'colors': colors,
+            'guessed': np.zeros(self.num_words, dtype=bool),
             'turn': (cn.Team.RED, cn.Role.SPYMASTER),
         }
         return self.state
@@ -188,7 +185,7 @@ class CodenamesEnv(gym.Env):
         hints = re.findall(r"([a-zA-Z ]+) (\d+)", hint.strip())
         if len(hints) == 0:
             result = f"Invalid hint: {hint}. Hint must be in the format 'word count'."
-            reward += self.rewards.HINT_INPARSEABLE.value
+            reward += self.rewards.HINT_UNPARSEABLE.value
             return None, reward, result
         elif len(hints) > 1:
             result = f"Invalid hint: {hint}. Only one hint word and count allowed."
@@ -196,28 +193,25 @@ class CodenamesEnv(gym.Env):
             return None, reward, result
         reward += self.rewards.HINT_PARSEABLE.value
 
-        hint = hints[0]
-        word, count = hint
+        word, count = hints[0]
 
         # Validate count
         if not count.isdigit() or int(count) < 0:
             result = f"Invalid hint: {hint}. Count must be a non-negative integer."
             reward += self.rewards.HINT_INVALID_COUNT.value
             return None, reward, result
+        count = int(count)
         reward += self.rewards.HINT_VALID_COUNT.value
         
         # Validate word
         word = word.strip().upper()
-        subwords = word.split()
-        for i, game_word in enumerate(self.state['words']):
-            if self.state['guessed'][i]:
-                continue
-            if game_word in subwords:
-                result = f"Invalid hint: {hint}. Hint word is on the board."
-                reward += self.rewards.HINT_WORD_ON_BOARD.value
-                return None, reward, result
+        if np.isin(word.split(), self.state['words'][~self.state['guessed']]):
+            result = f"Invalid hint: {hint}. Hint word or subword is on the board."
+            reward += self.rewards.HINT_WORD_ON_BOARD.value
+            return None, reward, result
         reward += self.rewards.HINT_VALID_WORD.value
 
+        hint = (word, count)
         return hint, reward, f"Valid hint: {hint}."
 
     def parse_guess(self, guess):
@@ -239,9 +233,7 @@ class CodenamesEnv(gym.Env):
             result = f"Invalid guess: {guess}. Guess is not a word on the board."
             reward += self.rewards.GUESS_NOT_ON_BOARD.value
             return None, reward, result
-        
-        index = self.state['words'].index(guess)
-        if self.state['guessed'][index]:
+        elif self.state['guessed'][self.state['words'] == guess]:
             result = f"Invalid guess: {guess}. Guess has already been made."
             reward += self.rewards.GUESS_ALREADY_MADE.value
             return None, reward, result
@@ -255,21 +247,10 @@ class CodenamesEnv(gym.Env):
         self.state['hint'] = None
 
     def check_winner(self):
-        remaining = {
-            cn.Color.RED: 0, 
-            cn.Color.BLUE: 0, 
-            cn.Color.NEUTRAL: 0, 
-            cn.Color.ASSASSIN: 0
-        }
-        for i, word in enumerate(self.state['words']):
-            if self.state['guessed'][i]:
-                continue
-            remaining[self.state['board'][i]] += 1
-            if remaining[cn.Color.RED] > 0 and remaining[cn.Color.BLUE] > 0:
-                return None
-        if remaining[cn.Color.RED] == 0:
+        remaining = self.state['colors'][self.state['guessed']]
+        if np.all(remaining != cn.Color.RED):
             return cn.Team.RED
-        elif remaining[cn.Color.BLUE] == 0:
+        elif np.all(remaining != cn.Color.BLUE):
             return cn.Team.BLUE
         return None
             

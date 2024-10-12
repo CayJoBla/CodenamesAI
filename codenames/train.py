@@ -1,4 +1,5 @@
 import os
+import numpy as np
 
 from .gym import CodenamesEnv
 from .agents import Human, Dummy, Spymaster, Operative
@@ -88,7 +89,7 @@ def codenames(
             # Operative's turn
             while not done and team == env.state['turn'][0]:
                 assert env.state['turn'][1] == cn.Role.OPERATIVE
-                obs_state = {k: v for k, v in env.state.items() if k != 'board'}
+                obs_state = {k: v for k, v in env.state.items() if k != 'colors'}
                 action = operative.get_action(obs_state)
                 obs, reward_n, done, info = env.step(action)
                 if not operative.is_dummy:

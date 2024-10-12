@@ -88,6 +88,12 @@ class AI(CodenamesAgent):
     def tokenize(self, sample):
         tokenized = self.tokenizer(sample, return_tensors='pt')
         return tokenized['input_ids'].squeeze().to(self.device)
+    
+    def postprocess(self, response):
+        response = response.replace("<|start_header_id|>assistant<|end_header_id|>", "")
+        response = response.replace("<|eot_id|>", "")
+        # response = response.replace("\n", " ")
+        return response.strip()
 
     def get_action(self, obs_state):
         prompt = self.get_prompt(obs_state)
@@ -98,7 +104,7 @@ class AI(CodenamesAgent):
             **self.generation_kwargs
         ).squeeze()
         response = self.tokenizer.decode(self.response_tensor)
-        return self.parse_action(response)
+        return self.parse_action(self.postprocess(response))
 
     def step(self, reward):
         if self.query_tensor is None or self.response_tensor is None:
@@ -108,13 +114,12 @@ class AI(CodenamesAgent):
             [self.response_tensor], 
             [torch.tensor(reward, dtype=float).to(self.device)]
         )
-        # self.ppo_trainer.log_stats(stats, None, reward)
+        self.ppo_trainer.log_stats(stats, None, reward)
         self.query_tensor = None
         self.response_tensor = None
 
     def save_model(self, path):
         self.ppo_trainer.save_model(path)
-
 
 class Spymaster(AI):
     def __init__(
@@ -140,24 +145,11 @@ class Spymaster(AI):
     
     def get_prompt(self, obs_state):
         print("Observation State:", obs_state)
-        chat = [
-            {
-                "role": "system",
-                "content": f"You are the playing the game Codenames as the {self.team.name} team's Spymaster.\nYou are only allowed to give a single word hint followed by a number of words that correspond to the hint.\nProvide no context or additional information.\nDo not use a hint word that is already on the board.\nProvide your hint word and number separated by a space in the format \"HINT NUMBER\".\n",
-            }, 
-            {
-                "role": "context",
-                "content": "",
-            }, 
-            {
-                "role": "user", 
-                "content": f"Please provide a single word hint and a number of related words to the operatives on your team such that they can guess some of the {self.team.name} Team's words without guessing any of the other team's words, neutral words, or the assassin word(s).",
-            },
-        ]
+        # Build the context for the chat
         context = ""
         for color in cn.Color:
             context += f"{color.name} Words:\n"
-            for i, word_color in enumerate(obs_state['board']):
+            for i, word_color in enumerate(obs_state['colors']):
                 if color == word_color:
                     word = obs_state['words'][i]
                     guessed = obs_state['guessed'][i]
@@ -166,18 +158,27 @@ class Spymaster(AI):
                         context += "\t(Already guessed)"
                     context += "\n"
             context += "\n"
-        chat[1]["content"] = context
-        
+        chat = [
+            {
+                "role": "system",
+                "content": f"You are the playing the game Codenames as the {self.team.name} team's Spymaster.\nYou are only allowed to give a single word hint followed by a number of words that correspond to the hint.\nProvide no context or additional information.\nDo not use a hint word that is already on the board.\nProvide your hint word and number separated by a space in the format \"HINT NUMBER\".\n",
+            }, 
+            {
+                "role": "context",
+                "content": context,
+            }, 
+            {
+                "role": "user", 
+                "content": f"Please provide a single word hint and a number of related words to the operatives on your team such that they can guess some of the {self.team.name} Team's words without guessing any of the other team's words, neutral words, or the assassin word(s).",
+            },
+        ]
         return self.tokenizer.apply_chat_template(chat, tokenize=False)
     
     def parse_action(self, response):
         print("Response:", response)
-        matches = re.findall(r"[a-zA-Z ]+ \d+", response)
-        if len(matches) == 0:
-            return ""
-        elif len(matches) >= 1:     # Only return the first hint
-            return matches[0]
-
+        # matches = re.findall(r"[a-zA-Z ]+ \d+", response)
+        # return " ".join(matches) if len(matches) > 0 else ""
+        return response
 
 class Operative(AI):
     def __init__(
@@ -192,6 +193,7 @@ class Operative(AI):
             team, 
             cn.Role.OPERATIVE,
             model_name_or_path,
+            freeze_base_model_weights,
             device,
             **config_kwargs
         )
@@ -200,17 +202,30 @@ class Operative(AI):
         return f"{self.__class__.__name__}({self.team.name})"
     
     def get_prompt(self, obs_state):
-        prompt = f"You are the playing the game Codenames.\n"
-        prompt += f"Your role is the {self.team.name} team's {self.role.name}.\n"
-        prompt += f"Please provide a guess word from the board that corresponds to the Spymaster's hint.\n"
-        prompt += f"Words on the board:\n"
-        for word, guessed in zip(obs_state['words'], obs_state['guessed']):
-            prompt += str(word)
-            if guessed:
-                prompt += "\t(Already guessed)"
-            prompt += "\n"
-        prompt += "\n"
-        prompt += f"Spymaster's Hint: {obs_state["hint"]}\n"
-        prompt += "Your Guess: "
-        return prompt
+        print("Observation State:", obs_state)
+        # Build the context for the chat
+        context = f"Words on the board:\n"
+        for word in obs_state['words'][~obs_state['guessed']]:
+            context += str(word) + "\n"
+        chat = [
+            {
+                "role": "system",
+                "content": f"You are the playing the game Codenames as the {self.team.name} team's Operative.\nYour goal is to guess the word on the board that is related to the given hint.\nProvide no context or additional information.\nYour guess must be a word that is on the board.\nIf you are unsure, you may skip your turn by saying nothing (i.e. "").\n",
+            }, 
+            {
+                "role": "context",
+                "content": context,
+            }, 
+            {
+                "role": "user", 
+                "content": f"Please provide a guess word from the board that relates to the given hint: \"{obs_state["hint"]}\".",
+            },
+        ]
+        return self.tokenizer.apply_chat_template(chat, tokenize=False)
+    
+    def parse_action(self, response):
+        print("Response:", response)
+        # matches = re.findall(r"[a-zA-Z ]+", response)
+        # return " ".join(matches) if len(matches) > 0 else ""
+        return response
         
