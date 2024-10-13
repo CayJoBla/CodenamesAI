@@ -109,7 +109,6 @@ class CodenamesEnv(gym.Env):
             other_team = cn.Team.BLUE if team == cn.Team.RED else cn.Team.RED
             if guess_color.name == team.name:           # Correct guess
                 info['result'] = f"Correct guess: {guess}."
-                print("Hint:", self.state['hint'])
                 if self.state['hint'][1] > 0:
                     self.state['hint'] = (self.state['hint'][0], self.state['hint'][1] - 1)
                 else:
@@ -159,7 +158,7 @@ class CodenamesEnv(gym.Env):
 
     def reset(self):
         # Create board words and team assignments
-        words = np.random.choice(self.full_word_list, self.num_words)
+        words = np.random.choice(self.full_word_list, self.num_words, replace=False)
         colors = np.array(
             [cn.Color.RED] * self.num_red +
             [cn.Color.BLUE] * self.num_blue +
@@ -176,8 +175,15 @@ class CodenamesEnv(gym.Env):
         return self.state
 
     def render(self):
-        # TODO: Implement render method to display game state
-        return None
+        board = ""
+        not_guessed = ~self.state['guessed']
+        for color in cn.Color:
+            board += f"{color.name} Words:\n"
+            for word in self.state['words'][(self.state['colors'] == color) & not_guessed]:
+                board += f"{word}\n"
+            board += "\n"
+        print(board, end='')
+        return board
 
     def parse_hint(self, hint):
         # Check for valid format
@@ -198,6 +204,10 @@ class CodenamesEnv(gym.Env):
         # Validate count
         if not count.isdigit() or int(count) < 0:
             result = f"Invalid hint: {hint}. Count must be a non-negative integer."
+            reward += self.rewards.HINT_INVALID_COUNT.value
+            return None, reward, result
+        elif int(count) > max(self.num_red, self.num_blue):
+            result = f"Invalid hint: {hint}. Count is too high."
             reward += self.rewards.HINT_INVALID_COUNT.value
             return None, reward, result
         count = int(count)

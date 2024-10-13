@@ -47,47 +47,52 @@ class AI(CodenamesAgent):
         team,
         role, 
         model_name_or_path,
+        ppo_config=None,
+        generation_kwargs=None,
         freeze_base_model_weights=True,
         device=None,
-        **config_kwargs
     ):
         super().__init__(team, role)
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-        model = AutoModelForCausalLMWithValueHead.from_pretrained(model_name_or_path).to(self.device)
+        device = device or "cuda" if torch.cuda.is_available() else "cpu"
+        is_cpu = device == "cpu"
+        ppo_config = ppo_config or PPOConfig(
+            model_name = model_name_or_path,
+            query_dataset = None,
+            batch_size = 1,
+            mini_batch_size = 1,
+            learning_rate = 1e-5,
+            accelerator_kwargs = {"cpu": is_cpu,},
+        )
+        model = AutoModelForCausalLMWithValueHead.from_pretrained(model_name_or_path).to(device)
+        tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.use_default_system_prompt = False
 
         if freeze_base_model_weights:
             for param in model.parameters():
                 param.requires_grad = False
             for param in model.v_head.parameters():
                 param.requires_grad = True
-
-        self.ppo_config = PPOConfig(
-            model_name = model_name_or_path,
-            batch_size = 1,
-            mini_batch_size = 1,
-            **config_kwargs
-        )
+        
         self.ppo_trainer = PPOTrainer(
-            config = self.ppo_config,
+            config = ppo_config,
             model = model,
-            tokenizer = self.tokenizer,
+            tokenizer = tokenizer,
         )
-        self.generation_kwargs = {
-            "min_length": 5,
-            "max_new_tokens": 50,
+        self.generation_kwargs = generation_kwargs or {
+            "min_length": 5,        # <start header> assistant <end header> RESPONSE <eot>
+            "max_new_tokens": 15,
             "top_k": 0.0,
             "top_p": 1.0,
             "do_sample": True,
-            "pad_token_id": self.tokenizer.eos_token_id,
+            "pad_token_id": tokenizer.eos_token_id,
         }
         self.query_tensor = None
         self.response_tensor = None
 
     def tokenize(self, sample):
-        tokenized = self.tokenizer(sample, return_tensors='pt')
-        return tokenized['input_ids'].squeeze().to(self.device)
+        tokenized = self.ppo_trainer.tokenizer(sample, return_tensors='pt')
+        return tokenized['input_ids'].squeeze().to(self.ppo_trainer.current_device)
     
     def postprocess(self, response):
         response = response.replace("<|start_header_id|>assistant<|end_header_id|>", "")
@@ -103,7 +108,7 @@ class AI(CodenamesAgent):
             return_prompt=False,
             **self.generation_kwargs
         ).squeeze()
-        response = self.tokenizer.decode(self.response_tensor)
+        response = self.ppo_trainer.tokenizer.decode(self.response_tensor)
         return self.parse_action(self.postprocess(response))
 
     def step(self, reward):
@@ -112,39 +117,35 @@ class AI(CodenamesAgent):
         stats = self.ppo_trainer.step(
             [self.query_tensor], 
             [self.response_tensor], 
-            [torch.tensor(reward, dtype=float).to(self.device)]
+            [torch.tensor(reward, dtype=float).to(self.ppo_trainer.current_device)]
         )
-        self.ppo_trainer.log_stats(stats, None, reward)
         self.query_tensor = None
         self.response_tensor = None
 
-    def save_model(self, path):
-        self.ppo_trainer.save_model(path)
+    def save(self, save_dir):
+        self.ppo_trainer.model.save_pretrained(save_dir)
 
 class Spymaster(AI):
     def __init__(
         self, 
         team,
         model_name_or_path, 
+        ppo_config=None,
+        generation_kwargs=None,
         freeze_base_model_weights=True,
         device=None,
-        **config_kwargs
     ):
         super().__init__(
             team, 
             cn.Role.SPYMASTER,
             model_name_or_path,
+            ppo_config,
+            generation_kwargs,
             freeze_base_model_weights,
             device,
-            **config_kwargs
         )
-        self.tokenizer.use_default_system_prompt = False
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}({self.team.name})"
     
     def get_prompt(self, obs_state):
-        print("Observation State:", obs_state)
         # Build the context for the chat
         context = ""
         for color in cn.Color:
@@ -172,37 +173,34 @@ class Spymaster(AI):
                 "content": f"Please provide a single word hint and a number of related words to the operatives on your team such that they can guess some of the {self.team.name} Team's words without guessing any of the other team's words, neutral words, or the assassin word(s).",
             },
         ]
-        return self.tokenizer.apply_chat_template(chat, tokenize=False)
+        return self.ppo_trainer.tokenizer.apply_chat_template(chat, tokenize=False)
     
     def parse_action(self, response):
-        print("Response:", response)
         # matches = re.findall(r"[a-zA-Z ]+ \d+", response)
         # return " ".join(matches) if len(matches) > 0 else ""
         return response
 
 class Operative(AI):
     def __init__(
-        self,
+        self, 
         team,
-        model_name_or_path,
+        model_name_or_path, 
+        ppo_config=None,
+        generation_kwargs=None,
         freeze_base_model_weights=True,
         device=None,
-        **config_kwargs
     ):
         super().__init__(
             team, 
             cn.Role.OPERATIVE,
             model_name_or_path,
+            ppo_config,
+            generation_kwargs,
             freeze_base_model_weights,
             device,
-            **config_kwargs
         )
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}({self.team.name})"
     
     def get_prompt(self, obs_state):
-        print("Observation State:", obs_state)
         # Build the context for the chat
         context = f"Words on the board:\n"
         for word in obs_state['words'][~obs_state['guessed']]:
@@ -218,13 +216,12 @@ class Operative(AI):
             }, 
             {
                 "role": "user", 
-                "content": f"Please provide a guess word from the board that relates to the given hint: \"{obs_state["hint"]}\".",
+                "content": f"Please provide a guess word from the board that relates to the given hint: \"{obs_state['hint']}\".",
             },
         ]
-        return self.tokenizer.apply_chat_template(chat, tokenize=False)
+        return self.ppo_trainer.tokenizer.apply_chat_template(chat, tokenize=False)
     
     def parse_action(self, response):
-        print("Response:", response)
         # matches = re.findall(r"[a-zA-Z ]+", response)
         # return " ".join(matches) if len(matches) > 0 else ""
         return response
