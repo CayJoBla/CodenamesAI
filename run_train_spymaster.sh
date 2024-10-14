@@ -16,8 +16,8 @@ cd /home/cayjobla/CodenamesAI
 source codenames_env/bin/activate
 
 python train_spymaster.py \
-	--spymaster meta-llama/Llama-3.1-8B-Instruct \
-	--num_games 3 \
-	--save_dir Llama-3.1-8B-Instruct-Codenames \
+	--spymaster gpt2 \
+	--num_games 10 \
+	--save_dir models \
 	--device cuda \
 	--do_train 

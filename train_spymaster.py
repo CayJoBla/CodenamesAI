@@ -1,8 +1,9 @@
 import os
 import numpy as np
 import argparse
-
+import time
 from trl import PPOConfig
+import json
 
 from codenames.gym import CodenamesEnv
 from codenames.agents import Human, Spymaster
@@ -48,10 +49,31 @@ def codenames_spymaster(
     )
 
     # Run the Codenames game
-    step = 0
-    while step < num_games:
+    i = 0
+    spymaster_model_name = "human" if isinstance(spymaster, Human) else spymaster.ppo_trainer.config.model_name
+    training_log = {
+        "spymaster_model": spymaster_model_name,
+        "operative_model": None,
+        "board_shape": board_shape,
+        "num_red": num_red,
+        "num_blue": num_blue,
+        "num_assassin": num_assassin,
+        "word_file": word_file,
+        "do_train": do_train,
+        "num_games": num_games,
+        "device": device,
+        "games": []
+    }
+    while i < num_games:
         env.reset()
-        print(env.state)
+        # env.render()
+        start_time = time.time()
+        game = {
+            "game": i + 1,
+            "words": env.state["words"].tolist(),
+            "colors": [color.name for color in env.state["colors"]],
+            "play": []
+        }
         for _ in range(2):
             # Do some clean substeps with no words guessed yet, then 
             # some substeps with words guessed already
@@ -60,10 +82,17 @@ def codenames_spymaster(
                 if env.state['turn'][0] != team:
                     env.turnover()
 
+                turn_desc = {
+                    "team": team.name,
+                    "spymaster": {},
+                    "operative": [],
+                }
+
                 # Spymaster's turn
                 assert env.state['turn'] == (team, cn.Role.SPYMASTER)
                 action = spymaster.get_action(env.state)
-                print("Spymaster's Action:", action)
+                # print("Spymaster's Action:", action)
+                turn_desc["spymaster"]["action"] = action
                 _, reward_n, _, info = env.step(action)
                 if do_train:
                     action_words = action.lower().split()
@@ -72,20 +101,31 @@ def codenames_spymaster(
                         spymaster_reward = min(spymaster_reward, KEYWORD_REWARD)
                         info['result'] += " Penalty because a keyword was used."
                     spymaster_reward += WORD_REWARD * len(action_words)
-                    print("Reward:", spymaster_reward)
+                    # print("Reward:", spymaster_reward)
+                    turn_desc["spymaster"]["initial_reward"] = spymaster_reward
                     spymaster.step(spymaster_reward)
-                print("Info:", info)
+                # print("Info:", info)
+                turn_desc["spymaster"]["info"] = info['result']
+
+                game["play"].append(turn_desc)
+
 
             # Randomly choose words as guessed already (after first substep per team)
             if num_red > 1 and num_blue > 1:
-                indices = np.random.choice(np.arange(env.num_words), size=min(num_red,num_blue)-1, replace=False)
+                num_guessed = np.random.randint(1, min(num_red,num_blue)-1)
+                indices = np.random.choice(np.arange(env.num_words), size=num_guessed, replace=False)
                 env.state['guessed'][indices] = True
-        step += 1
+
+        game["run_time"] = time.time() - start_time
+        training_log["games"].append(game)
+        i += 1
 
     if save_dir is not None:
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-        spymaster.save(save_dir)
+        spymaster.save(os.path.join(save_dir, 
+            f"{spymaster_model_name.split('/')[-1]}-Spymaster"
+        ))
+        with open(os.path.join(save_dir, f"training_log_spymaster.json"), "w") as f:
+            json.dump(training_log, f)
 
     return spymaster
 

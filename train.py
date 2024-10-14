@@ -4,6 +4,7 @@ from enum import Enum
 import argparse
 import json
 import time
+import torch
 
 from codenames.gym import CodenamesEnv
 from codenames.agents import Human, Dummy, Spymaster, Operative
@@ -57,19 +58,28 @@ def codenames(
     save_dir=None,
     device=None,
 ):
+    # Manage devices
+    device = device or "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda" and torch.cuda.device_count() > 1:
+        spymaster_device = "cuda:0"
+        operative_device = "cuda:1"
+    else:
+        spymaster_device = device
+        operative_device = device
+
     # Initialize the agents
     team = cn.Team.RED
     if spymaster is None:
         spymaster = Human(team, cn.Role.SPYMASTER) if allow_human_player else Dummy(team, cn.Role.SPYMASTER)
     elif isinstance(spymaster, str):
-        spymaster = Spymaster(team, model_name_or_path=spymaster, device=device)
+        spymaster = Spymaster(team, model_name_or_path=spymaster, device=spymaster_device)
     elif not isinstance(spymaster, Spymaster):
         raise ValueError("Invalid spymaster argument.")
-    
+
     if operative is None:
         operative = Human(team, cn.Role.OPERATIVE) if allow_human_player else Dummy(team, cn.Role.OPERATIVE) 
     elif isinstance(operative, str):
-        operative = Operative(team, model_name_or_path=operative, device=device)
+        operative = Operative(team, model_name_or_path=operative, device=operative_device)
     elif not isinstance(spymaster, Operative):
         raise ValueError("Invalid operative argument.")
 
@@ -173,10 +183,10 @@ def codenames(
 
     if save_dir is not None:
         spymaster.save(os.path.join(save_dir, 
-            f"{spymaster_model_name.split('/')[-1]}-{spymaster.role.name.lower()}"
+            f"{spymaster_model_name.split('/')[-1]}-Spymaster"
         ))
         operative.save(os.path.join(save_dir, 
-            f"{operative_model_name.split('/')[-1]}-{operative.role.name.lower()}"
+            f"{operative_model_name.split('/')[-1]}-Operative"
         ))
         with open(os.path.join(save_dir, f"training_log.json"), "w") as f:
             json.dump(training_log, f)
